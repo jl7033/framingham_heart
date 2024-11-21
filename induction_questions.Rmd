@@ -7,24 +7,234 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(cowplot)
 ```
 
-## R Markdown
+# Problem 1
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+```{r}
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+fram_heart = read_csv("data/frmgham2.csv") |>
+  janitor::clean_names()
 
-```{r cars}
-summary(cars)
 ```
 
-## Including Plots
+# Problem 2
 
-You can also embed plots, for example:
+### Calculate mean BMI for female and male participants
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+
+female_mean_bmi = fram_heart |> 
+  filter(sex == 2) |>
+  pull(bmi) |>
+  mean(na.rm = TRUE) |>
+  round(2)
+
+male_mean_bmi = fram_heart |> 
+  filter(sex == 1) |>
+  pull(bmi) |>
+  mean(na.rm = TRUE) |>
+  round(2)
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Impute data for missing BMI
+
+```{r}
+
+for(i in 1:nrow(fram_heart)){
+  if(is.na(fram_heart[i, "bmi"])) {
+    if(fram_heart[i, "sex"] == 2) {
+      fram_heart[i, "bmi"] = female_mean_bmi
+    } else if(fram_heart[i, "sex"] == 1) {
+      fram_heart[i, "bmi"] = male_mean_bmi
+    }
+  }
+}
+
+```
+
+There are no missing data for systolic blood pressure (`sysbp`) or diabetes (`diabetes`), so no adjustments were necessary for either of those variables.
+
+# Problem 3
+
+```{r}
+
+fram_heart |>
+  group_by(sex, diabetes) |>
+  summarize(n = n(),
+            mean_bmi = mean(bmi),
+            sd_bmi = sd(bmi),
+            min_bmi = min(bmi),
+            median_bmi = median(bmi),
+            max_bmi = max(bmi)) |>
+  knitr::kable(digits = 2)
+
+```
+
+From this table, we can see that women with diabetes ($n = 277$) have both the largest mean BMI ($28.11$) and largest variation $s = 6.33$ in BMI. Women *without* diabetes ($n = 6328$) have the smallest mean BMI ($25.52$).
+
+It's worth noting that due to the longitudinal nature of the dataset, some individuals are counted multiple times in this table (at different time points). Also, only a small portion of participants (`r round(mean(fram_heart$diabetes) * 100, 2)`\%) have diabetes, so the sample sizes for the diabetic groups are much smaller than the sample sizes for the non-diabetic groups.
+
+# Problem 4
+
+```{r}
+
+male_bmi_plot = fram_heart |>
+  filter(sex == 1) |>
+  mutate(diabetes = as.logical(diabetes)) |>
+  ggplot(aes(x = diabetes, y = bmi)) + 
+    geom_boxplot(fill = "lightblue") +
+    labs(
+      x = "Diabetes Status",
+      y = "BMI",
+      title = "Dist. of BMI by Diabetes Status (Men)"
+    ) +
+    geom_point(alpha = 0.05) +
+    scale_y_continuous(limits = c(0, 60))
+
+female_bmi_plot = fram_heart |>
+  filter(sex == 2) |>
+  mutate(diabetes = as.logical(diabetes)) |>
+  ggplot(aes(x = diabetes, y = bmi)) + 
+    geom_boxplot(fill = "pink") +
+    labs(
+      x = "Diabetes Status",
+      y = "BMI",
+      title = "Dist. of BMI by Diabetes Status (Women)"
+    ) +
+    geom_point(alpha = 0.05) +
+    scale_y_continuous(limits = c(0, 60))
+
+plot_grid(male_bmi_plot, female_bmi_plot)
+
+```
+
+# Problem 5
+
+```{r}
+
+lm_simple = lm(bmi ~ sex + diabetes, data = fram_heart)
+summary(lm_simple)
+
+```
+
+From our model, we see that the `sex` coefficient is negative, so we can conclude that on average, women have a lower mean BMI than men when accounting for diabetes status (since women are coded as "2" and men are coded as "1"). This is an interesting conclusion, as we saw from our table in Problem 3 that women with diabetes have a higher average BMI than men with diabetes. One reason why the model's results could be the way they are is that overall, women do have a lower mean BMI, and the sample sizes for non-diabetic men and women are much larger than the sample sizes for diabetic men and women.
+
+The $P$-value for the sex-coefficient is far less than $0.05$, implying that there is a statistically significant difference in mean BMI for women and men even when accounting for diabetes status.
+
+Additional covariates we could use include age, total cholesterol and glucose levels in the blood, smoking status, or the number of cigarettes used per day. While smoking status is a binary variable, the other variables are continuous.
+
+# Problem 6
+
+```{r}
+
+lm_interaction = lm(bmi ~ sex + diabetes + sex * diabetes, 
+                    data = fram_heart)
+
+summary(lm_interaction)
+
+```
+
+In order to explore if the effect of diabetes status on BMI differed for men and women, we could add an interaction term (`sex * diabetes`). Since the interaction term is statistically significant ($P << 0.05$), we can conclude that there is a significant difference in the relationship between diabetes status and BMI based on gender.
+
+Specifically, when interpreting the regression coefficients, we would add the `sex:diabetes` coefficient once to our estimate if the participant is a man with diabetes and twice if the participant is a woman with diabetes. For example, for a woman with diabetes, our BMI estimate would be $26.807 - 2(0.644) - 0.999 + 2(1.793) = 28.108$, which nearly exactly matches the mean BMI for women with diabetes that we calculated in problem 3. 
+
+One key assumption in this model is that each observation is independent, but as we noted in Problem 3, some individuals are counted multiple times in the data. Therefore, data points representing the same person are inherently correlated, and thus not independent.
+
+# Problem 7
+
+### Create a function to detect whether a participant quit smoking
+
+```{r}
+
+quit_smoke = function(df){
+  qs = NULL
+  qs[1] = FALSE
+  for(i in 2:nrow(df)) {
+    if(df[i, "randid"] == df[i-1, "randid"]) {
+      if(df[i, "cursmoke"] == df[i-1, "cursmoke"] - 1){
+        qs[i] = TRUE
+      } else if(qs[i-1] == TRUE) {
+        qs[i] = TRUE
+      } else {
+        qs[i] = FALSE
+      }
+    } else {
+      qs[i] = FALSE
+    }
+  }
+  return(qs)
+}
+
+```
+
+### Put the new quit variable into the data frame
+
+```{r}
+
+fram_heart = fram_heart |>
+  mutate(quit = quit_smoke(fram_heart))
+
+```
+
+### Find the participants who quit smoking
+
+```{r}
+
+quit_smokers = fram_heart |>
+  select(randid, quit) |>
+  filter(quit == TRUE) |>
+  distinct()
+
+nrow(quit_smokers)
+
+```
+
+We can see that over the course of the study, 665 people quit smoking. I created a function called `quit_smoke` that creates a logical vector that tracks whether each participant has quit smoking, and remains true for participants' subsequent study visits (that way, we can analyze systolic blood pressure before and after smoking for Problem #8).
+
+# Problem 8
+
+### Create a new data frame for only those who quit smoking at some point
+
+```{r}
+
+fram_heart_quit = fram_heart |>
+  filter(randid %in% quit_smokers$randid)
+
+```
+
+### Create summary table for systolic BP before and after quitting
+
+```{r}
+
+fram_heart_quit |>
+  group_by(quit) |>
+  summarize(mean_bp = mean(sysbp)) |>
+  knitr::kable(digits = 2)
+
+```
+
+On average, we can see that systolic blood pressue was actually *higher* after quitting smoking than before quitting, with means of $139.20$ and $131.88$, respectively.
+
+```{r}
+
+
+
+```
+
+
+
+# Problem 9
+
+```{r}
+
+fram_heart_quit |>
+  select(randid, sysbp, quit)
+
+```
+
+
+# Problem 10
