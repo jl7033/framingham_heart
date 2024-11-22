@@ -90,7 +90,7 @@ male_bmi_plot = fram_heart |>
     labs(
       x = "Diabetes Status",
       y = "BMI",
-      title = "Dist. of BMI by Diabetes Status (Men)"
+      title = "Dist. of BMI by Diabetes Status (M)"
     ) +
     geom_point(alpha = 0.05) +
     scale_y_continuous(limits = c(0, 60))
@@ -103,7 +103,7 @@ female_bmi_plot = fram_heart |>
     labs(
       x = "Diabetes Status",
       y = "BMI",
-      title = "Dist. of BMI by Diabetes Status (Women)"
+      title = "Dist. of BMI by Diabetes Status (F)"
     ) +
     geom_point(alpha = 0.05) +
     scale_y_continuous(limits = c(0, 60))
@@ -219,22 +219,63 @@ fram_heart_quit |>
 
 On average, we can see that systolic blood pressue was actually *higher* after quitting smoking than before quitting, with means of $139.20$ and $131.88$, respectively.
 
-```{r}
-
-
-
-```
-
-
-
 # Problem 9
 
+### Create function to get BP change only directly after quitting smoking
+
 ```{r}
 
-fram_heart_quit |>
-  select(randid, sysbp, quit)
+bpChange = function(df){
+  bp_change = NULL
+  bp_change[1] = NA
+  for(i in 2:nrow(df)) {
+    if(df[i, "randid"] == df[i-1, "randid"]) {
+      if(df[i, "quit"] == TRUE){
+        if(df[i-1, "quit"] == TRUE){
+          bp_change[i] = NA
+        } else {
+          bp_change[i] = df[i, "sysbp"] - df[i-1, "sysbp"]
+        }
+      } else {
+        bp_change[i] = NA
+      }
+    } else {
+      bp_change[i] = NA
+    }
+  }
+  return(bp_change)
+}
 
 ```
 
+### Get a data frame filtered for participants IDs and their change in BP after quitting smoking
+
+```{r}
+
+change_df = fram_heart_quit |>
+  select(randid, sysbp, quit) |>
+  mutate(change = bpChange(fram_heart_quit)) |>
+  unnest(change) |>
+  filter(!is.na(change))
+
+```
+
+### Make a boxplot of changes in systolic BP before/after quitting
+
+```{r}
+
+change_df |>
+  ggplot(aes(y = change)) +
+  geom_boxplot(fill = "lightblue", col = "black") + 
+  labs(
+    y = "Change in Blood Pressure",
+    title = "Change in Blood Pressure for Participants who Quit Smoking in the FHS"
+  )
+
+```
+
+From the boxplot, we can see that the distribution in the changes in systolic blood pressure from before quitting smoking to the first study visit after quitting is symmetric, with few outliers, and centered around a blood pressure *gain* of about 5 mmHg. This is slightly surprising, as conventional wisdom would say that quitting smoking leads to lower blood pressure (and particularly a reduction in hypertension risk), but there are other factors -- such as increased age -- that could potentially explain the positive difference in systolic blood pressure over time.
 
 # Problem 10
+
+Printing out the command `sessioninfo::session_info()` gives the version of R being used, the current computer operating system, the date, and all packages that have been installed by the user, among other information. This can potentially be useful when syncing data and R Markdown documents across different versions of R, as not all users may have the latest version of R.
